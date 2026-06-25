@@ -1,0 +1,25 @@
+{
+  "name": "bv-mcp-atc",
+  "version": "1.0.0",
+  "description": "MCP server – Bella Vista Paddle Club × ATC scraping",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test:scraper": "tsx src/test-scraper.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.9.0",
+    "dotenv": "^16.4.0",
+    "googleapis": "^144.0.0",
+    "puppeteer": "^23.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
