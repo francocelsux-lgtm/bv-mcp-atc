@@ -213,6 +213,59 @@ export class ATCScraper {
     return this.parseATCBookings(rawData, courtsMap, date);
   }
 
+  // ── Investigación de URLs ──────────────────────────────────────────────────
+
+  async navigateAndLogApis(targetUrl: string): Promise<void> {
+    const p = this.requirePage();
+    const captured: Array<{ url: string; preview: string }> = [];
+
+    // Capturar todas las respuestas JSON durante la navegación
+    p.on('response', async (res: HTTPResponse) => {
+      try {
+        if (res.status() !== 200) return;
+        const ct = res.headers()['content-type'] ?? '';
+        if (!ct.includes('application/json')) return;
+        const url = res.url();
+        if (url.includes('atcsports.io')) {
+          const json = await res.json();
+          const preview = JSON.stringify(json).slice(0, 200);
+          captured.push({ url, preview });
+        }
+      } catch { /* ignorar */ }
+    });
+
+    // Navegar usando hash change (ya estamos logueados en la SPA)
+    const base = p.url().split('#')[0];
+    const targetBase = targetUrl.split('#')[0];
+    const hashPart = targetUrl.includes('#') ? targetUrl.slice(targetUrl.indexOf('#') + 1) : '';
+
+    if (base === targetBase && hashPart) {
+      this.log(`Navegando a hash: #${hashPart}`);
+      await p.evaluate((h) => { window.location.hash = h; }, hashPart);
+    } else {
+      await p.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30_000 });
+    }
+
+    await new Promise(res => setTimeout(res, 5_000));
+    await this.debugSnapshot('investigate-page');
+
+    this.log('\n═══ APIs de atcsports.io detectadas ═══');
+    for (const { url, preview } of captured) {
+      this.log(`\n  URL: ${url}`);
+      this.log(`  Datos: ${preview}…`);
+    }
+
+    if (this.debug) {
+      await fs.mkdir(this.debugDir, { recursive: true });
+      await fs.writeFile(
+        path.join(this.debugDir, 'investigate-apis.json'),
+        JSON.stringify(captured, null, 2),
+        'utf8',
+      );
+      this.log(`\nResultados completos en: debug/investigate-apis.json`);
+    }
+  }
+
   // ── Helpers de API de ATC ──────────────────────────────────────────────────
 
   private async getClubId(p: Page): Promise<string> {
@@ -352,6 +405,21 @@ export class ATCScraper {
       fullPage: true,
     });
     this.log(`Debug snapshot: ${name}.png`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Función de investigación: navega a una URL y loguea todos los endpoints JSON
+// Usada para descubrir APIs nuevas. Ejecutar con ATC_DEBUG=true.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function investigateUrl(targetUrl: string): Promise<void> {
+  const scraper = new ATCScraper();
+  try {
+    await scraper.init();
+    await scraper.login();
+    await scraper.navigateAndLogApis(targetUrl);
+  } finally {
+    await scraper.close();
   }
 }
 
