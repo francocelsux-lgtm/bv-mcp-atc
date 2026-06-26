@@ -14,14 +14,17 @@ const SEL = {
   submit:   process.env.ATC_SEL_SUBMIT   ?? 'button[type="submit"]',
 };
 
-// Patrones de URL de la API interna de ATC que contienen datos de reservas
+// Patrones de URL de la API interna de ATC (atcsports.io) que contienen reservas
 const BOOKING_URL_PATTERNS = [
-  /\/api\/.*\/(booking|reserva|slot|schedule|turn)/i,
+  /atcsports\.io\/api\//i,
+  /\/api\/.*\/(booking|reserva|slot|schedule|turn|grid|availability)/i,
   /\/bookings?[/?]/i,
   /\/reservas?[/?]/i,
   /\/slots?[/?]/i,
   /\/schedule[/?]/i,
   /\/turns?[/?]/i,
+  /\/grid[/?]/i,
+  /\/availability[/?]/i,
 ];
 
 export function todayArgentina(): string {
@@ -31,10 +34,15 @@ export function todayArgentina(): string {
 }
 
 function getScheduleUrl(): string {
-  if (process.env.ATC_CLUB_SCHEDULE_URL) return process.env.ATC_CLUB_SCHEDULE_URL;
   const date = todayArgentina();
+  if (process.env.ATC_CLUB_SCHEDULE_URL) {
+    const base = process.env.ATC_CLUB_SCHEDULE_URL;
+    // Si ya tiene fecha en el hash (date=...) la reemplazamos por hoy
+    return base.replace(/date=[\d-]+/, `date=${date}`);
+  }
   const slug = process.env.ATC_CLUB_SLUG ?? '';
-  return `https://alquilatucancha.com/club/${slug}/agenda?date=${date}`;
+  // URL real de atcsports.io con hash routing
+  return `https://atcsports.io/club/${slug}#!/app/grid?date=${date}`;
 }
 
 function normalizeTime(raw: unknown): string {
@@ -116,7 +124,7 @@ export class ATCScraper {
     const p = this.requirePage();
     const email    = this.requireEnv('ATC_EMAIL');
     const password = this.requireEnv('ATC_PASSWORD');
-    const loginUrl = process.env.ATC_LOGIN_URL ?? 'https://alquilatucancha.com/login';
+    const loginUrl = process.env.ATC_LOGIN_URL ?? 'https://atcsports.io/login';
 
     this.log(`Navegando a login: ${loginUrl}`);
     await p.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 30_000 });
