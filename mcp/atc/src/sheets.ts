@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
+import { instance as gaxiosInstance } from 'gaxios';
 import type { sheets_v4 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
 import http from 'http';
@@ -10,6 +11,18 @@ import path from 'path';
 import { Reserva, SyncResult } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Retry on transient network errors (Premature close, ECONNRESET, ETIMEDOUT)
+gaxiosInstance.defaults = {
+  ...gaxiosInstance.defaults,
+  retryConfig: {
+    retry: 4,
+    noResponseRetries: 4,
+    retryDelay: 1000,
+    httpMethodsToRetry: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    statusCodesToRetry: [[100, 199], [408, 408], [429, 429], [500, 599]],
+  },
+};
 
 const SHEET_HEADERS = [
   'Fecha', 'Cancha', 'Hora Inicio', 'Hora Fin', 'Duración',
