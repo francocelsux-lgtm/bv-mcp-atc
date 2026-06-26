@@ -12,32 +12,32 @@ const SHEET_HEADERS = [
   'Sincronizado',
 ];
 
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+
 type Sheets = sheets_v4.Sheets;
 
-function getServiceAccountCredentials(): object {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) {
-    throw new Error(
-      'GOOGLE_SERVICE_ACCOUNT_JSON no está definido.\n' +
-      'Pegá el contenido JSON de la Service Account en esa variable de entorno.',
-    );
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    throw new Error(
-      'GOOGLE_SERVICE_ACCOUNT_JSON no es JSON válido. ' +
-      'Asegurate de que el valor esté en una sola línea sin caracteres escapados incorrectos.',
-    );
-  }
-}
-
+// Soporta dos modos de autenticación:
+//   1. GOOGLE_SERVICE_ACCOUNT_JSON definida → usa la service account (requiere clave)
+//   2. Sin esa variable → usa Application Default Credentials (gcloud auth application-default login)
 function buildSheetsClient(): Sheets {
-  const credentials = getServiceAccountCredentials();
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+
+  if (raw) {
+    let credentials: object;
+    try {
+      credentials = JSON.parse(raw);
+    } catch {
+      throw new Error(
+        'GOOGLE_SERVICE_ACCOUNT_JSON no es JSON válido. ' +
+        'Asegurate de que el valor esté en una sola línea sin caracteres escapados incorrectos.',
+      );
+    }
+    const auth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
+    return google.sheets({ version: 'v4', auth });
+  }
+
+  // Application Default Credentials: usa `gcloud auth application-default login`
+  const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
   return google.sheets({ version: 'v4', auth });
 }
 
