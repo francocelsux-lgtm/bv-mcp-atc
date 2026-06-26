@@ -284,6 +284,8 @@ export class ATCScraper {
       }
     }
 
+    // Ordenar por cancha y hora de inicio
+    reservas.sort((a, b) => a.cancha.localeCompare(b.cancha) || a.horaInicio.localeCompare(b.horaInicio));
     this.log(`${reservas.length} reservas parseadas.`);
     return reservas;
   }
