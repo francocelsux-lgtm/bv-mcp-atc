@@ -18,14 +18,14 @@ import { syncReservasToSheets } from './sheets.js';
 
 const ts = () => new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 
-async function withRetry<T>(fn: () => Promise<T>, label: string, attempts = 3): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, label: string, attempts = 5): Promise<T> {
   for (let i = 0; i < attempts; i++) {
     try {
       return await fn();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (i === attempts - 1) throw err;
-      const delayMs = 3000 * Math.pow(2, i); // 3s, 6s
+      const delayMs = 2000 * Math.pow(2, i); // 2s, 4s, 8s, 16s
       process.stderr.write(`[${ts()}] ${label}: reintento ${i + 1}/${attempts - 1} en ${delayMs / 1000}s... (${msg})\n`);
       await new Promise(r => setTimeout(r, delayMs));
     }
@@ -41,10 +41,12 @@ try {
   process.stderr.write(`[${ts()}] ✓ ${result.message}\n`);
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
-  // Hint for "Premature close" — usually means the OAuth token needs re-generación
-  if (msg.includes('Premature close') || msg.includes('invalid_grant') || msg.includes('Token has been expired')) {
-    process.stderr.write(`[${ts()}] ✗ Error de autenticación Google.\n`);
+  if (msg.includes('invalid_grant') || msg.includes('Token has been expired') || msg.includes('invalid_token')) {
+    process.stderr.write(`[${ts()}] ✗ Token de Google revocado o expirado.\n`);
     process.stderr.write(`[${ts()}]   Eliminá google-token.json y corré 'npm run sync' de nuevo para re-autenticar.\n`);
+  } else if (msg.includes('Premature close') || msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT')) {
+    process.stderr.write(`[${ts()}] ✗ Error de red con Google (después de reintentos).\n`);
+    process.stderr.write(`[${ts()}]   Problema de conexión transitorio con los servidores de Google. Intentá de nuevo en unos minutos.\n`);
   } else {
     process.stderr.write(`[${ts()}] ✗ Error: ${msg}\n`);
   }
