@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 import type { sheets_v4 } from 'googleapis';
 import type { OAuth2Client } from 'google-auth-library';
@@ -8,9 +9,12 @@ import fs from 'fs/promises';
 import path from 'path';
 import { Reserva, SyncResult } from './types.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const SHEET_HEADERS = ['Fecha', 'Cancha', 'Hora Inicio', 'Hora Fin', 'Estado', 'Cliente', 'Sincronizado'];
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
-const TOKEN_PATH = path.resolve(process.env.GOOGLE_TOKEN_PATH ?? './google-token.json');
+// TOKEN_PATH resuelto relativo al proyecto, no al CWD
+const TOKEN_PATH = path.resolve(process.env.GOOGLE_TOKEN_PATH ?? path.join(__dirname, '../google-token.json'));
 
 type Sheets = sheets_v4.Sheets;
 
