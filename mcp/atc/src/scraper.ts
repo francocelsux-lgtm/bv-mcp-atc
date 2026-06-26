@@ -124,7 +124,16 @@ export class ATCScraper {
     await this.debugSnapshot('01-login-page');
 
     // Esperamos que aparezca el campo email
-    await p.waitForSelector(SEL.email, { timeout: 10_000 });
+    try {
+      await p.waitForSelector(SEL.email, { timeout: 10_000 });
+    } catch {
+      await this.debugSnapshot('01-error-no-email-field');
+      throw new Error(
+        `No se encontró el campo email en: ${p.url()}\n` +
+        `Verificá ATC_LOGIN_URL y que el sitio no esté bloqueando el acceso.\n` +
+        `Activá ATC_DEBUG=true para ver captura de pantalla.`,
+      );
+    }
 
     await p.click(SEL.email);
     await p.evaluate((sel) => {
@@ -133,6 +142,8 @@ export class ATCScraper {
     }, SEL.email);
     await p.type(SEL.email, email, { delay: 40 });
 
+    // Esperamos el campo password (puede tardar más en CI o si el form es de dos pasos)
+    await p.waitForSelector(SEL.password, { timeout: 15_000 });
     await p.click(SEL.password);
     await p.evaluate((sel) => {
       const el = document.querySelector(sel) as HTMLInputElement | null;
