@@ -46,10 +46,20 @@ function normalizeTime(raw: unknown): string {
 
 function parseEstado(raw: string): EstadoReserva {
   const s = raw.toLowerCase();
-  if (s.includes('confirm') || s.includes('activ') || s.includes('paid') || s.includes('pago')) return 'confirmada';
+  // ATC usa "ready" para reservas confirmadas activas
+  if (s === 'ready' || s.includes('confirm') || s.includes('activ') || s.includes('paid') || s.includes('pago')) return 'confirmada';
   if (s.includes('pend') || s.includes('reserv') || s.includes('waiting')) return 'pendiente';
   if (s.includes('cancel') || s.includes('rechaz') || s.includes('refund')) return 'cancelada';
+  if (s === 'done' || s === 'finished') return 'confirmada'; // reservas ya jugadas
   return 'desconocido';
+}
+
+function addMinutes(hora: string, minutes: number): string {
+  const [h, m] = hora.split(':').map(Number);
+  const total = (h ?? 0) * 60 + (m ?? 0) + minutes;
+  const eh = Math.floor(total / 60) % 24;
+  const em = total % 60;
+  return `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,55 +247,69 @@ export class ATCScraper {
     return map;
   }
 
-  // ── Parser dedicado para el formato de ATC ─────────────────────────────────
+  // ── Parser dedicado para el formato real de ATC ───────────────────────────
+  //
+  // Estructura de la API /c/sportclubs/{id}/bookings?day={date}:
+  // {
+  //   "data": [
+  //     { "id": 6057, "name": "Cancha 1",
+  //       "booking_once":  [ { booking... } ],
+  //       "booking_fixed": [ { booking... } ],
+  //       "booking_done":  [ { booking... } ] },
+  //     ...
+  //   ]
+  // }
+  // Cada booking tiene:
+  //   state: "ready" | "cancelled" | "done" ...
+  //   user: { name: "..." }
+  //   bookeable: { datetime_start: "2026-06-26 15:00", duration: 90 }
 
-  private parseATCBookings(data: unknown, courts: Map<number, string>, fecha: string): Reserva[] {
-    const items = Array.isArray(data) ? data :
-      ((data as Record<string, unknown>)?.bookings ??
-       (data as Record<string, unknown>)?.data ??
-       []) as unknown[];
+  private parseATCBookings(data: unknown, _courts: Map<number, string>, fecha: string): Reserva[] {
+    const courtList = (data as Record<string, unknown>)?.data;
+    if (!Array.isArray(courtList)) {
+      this.log(`Estructura inesperada. Keys encontradas: ${Object.keys(data as object ?? {}).join(', ')}`);
+      return [];
+    }
 
-    const reservas = (items as Record<string, unknown>[])
-      .map(item => this.parseATCItem(item, courts, fecha))
-      .filter((r): r is Reserva => r !== null);
+    const reservas: Reserva[] = [];
+    for (const court of courtList as Record<string, unknown>[]) {
+      const courtName = String(court.name ?? `Cancha ${court.id}`);
+      for (const key of ['booking_once', 'booking_fixed', 'booking_done'] as const) {
+        const bookings = court[key];
+        if (!Array.isArray(bookings)) continue;
+        for (const b of bookings as Record<string, unknown>[]) {
+          const r = this.parseATCItem(b, courtName, fecha);
+          if (r) reservas.push(r);
+        }
+      }
+    }
 
     this.log(`${reservas.length} reservas parseadas.`);
     return reservas;
   }
 
-  private parseATCItem(item: Record<string, unknown>, courts: Map<number, string>, fecha: string): Reserva | null {
-    // Court: lookup por ID en el mapa, o desde el objeto court anidado
-    const courtObj = item.court as Record<string, unknown> | undefined;
-    const courtId  = Number(courtObj?.id ?? item.court_id ?? item.courtId ?? 0);
-    const cancha   = courts.get(courtId) ??
-      String(courtObj?.name ?? item.cancha ?? item.court_name ?? (courtId ? `Cancha ${courtId}` : 'Sin especificar')).trim();
+  private parseATCItem(item: Record<string, unknown>, courtName: string, fecha: string): Reserva | null {
+    // bookeable contiene la hora y duración
+    const bookeable = item.bookeable as Record<string, unknown> | undefined;
+    if (!bookeable?.datetime_start) return null;
 
-    // Horario: desde objeto slot anidado o campos directos
-    const slot       = item.slot as Record<string, unknown> | undefined;
-    const horaInicio = normalizeTime(
-      slot?.from  ?? slot?.start      ?? slot?.start_time  ??
-      item.start_time ?? item.startTime ?? item.start ?? item.from ?? item.hora_inicio ?? '',
-    );
-    const horaFin = normalizeTime(
-      slot?.to    ?? slot?.end        ?? slot?.end_time    ??
-      item.end_time   ?? item.endTime   ?? item.end   ?? item.to   ?? item.hora_fin   ?? '',
-    );
-
+    // "2026-06-26 15:00" → "15:00"
+    const datetimeStr = String(bookeable.datetime_start);
+    const horaInicio  = normalizeTime(datetimeStr.split(' ')[1] ?? '');
     if (!horaInicio) return null;
 
-    // Cliente: desde objeto user/player anidado o campos directos
-    const userObj = (item.user ?? item.player ?? item.client) as Record<string, unknown> | undefined;
-    const cliente = String(
-      userObj?.name ?? userObj?.full_name ?? userObj?.display_name ??
-      item.user_name ?? item.player_name ?? item.client_name ?? item.nombre ?? '',
-    ).trim();
+    const duration = Number(bookeable.duration ?? 90); // minutos
+    const horaFin  = addMinutes(horaInicio, duration);
+
+    const userObj = item.user as Record<string, unknown> | undefined;
+    const cliente = String(userObj?.name ?? '').trim();
 
     return {
       id:            String(item.id ?? '').trim() || undefined,
-      cancha,
+      cancha:        courtName,
       horaInicio,
       horaFin,
-      estado:        parseEstado(String(item.status ?? item.estado ?? item.state ?? '')),
+      estado:        parseEstado(String(item.state ?? item.status ?? '')),
       nombreCliente: cliente || undefined,
       fecha,
     };
