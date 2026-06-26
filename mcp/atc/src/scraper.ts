@@ -3,7 +3,7 @@ import type { Browser, Page, HTTPResponse } from 'puppeteer';
 // HTTPResponse used only in debug mode response listener
 import path from 'path';
 import fs from 'fs/promises';
-import { Reserva, EstadoReserva } from './types.js';
+import { Reserva, EstadoReserva, EstadoCobro, TipoTurno } from './types.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Selectores CSS – sobreescribibles por env vars.
@@ -330,8 +330,9 @@ export class ATCScraper {
   // }
   // Cada booking tiene:
   //   state: "ready" | "cancelled" | "done" ...
-  //   user: { name: "..." }
+  //   user: { name: "...", phone: "..." }
   //   bookeable: { datetime_start: "2026-06-26 15:00", duration: 90 }
+  //   price, balance, fixed, online, blocker, note, created_at
 
   private parseATCBookings(data: unknown, _courts: Map<number, string>, fecha: string): Reserva[] {
     const courtList = (data as Record<string, unknown>)?.data;
@@ -373,15 +374,55 @@ export class ATCScraper {
     const horaFin  = addMinutes(horaInicio, duration);
 
     const userObj = item.user as Record<string, unknown> | undefined;
-    const cliente = String(userObj?.name ?? '').trim();
+    const cliente  = String(userObj?.name  ?? '').trim();
+    const telefono = userObj?.phone ? String(userObj.phone).trim() : undefined;
+
+    // Estado de cobro: cobrado / pendiente / sin_cargo
+    const priceRaw   = parseFloat(String(item.price   ?? '0')) || 0;
+    const balanceRaw = parseFloat(String(item.balance ?? '0')) || 0;
+    let estadoCobro: EstadoCobro;
+    if (priceRaw === 0) {
+      estadoCobro = 'sin_cargo';
+    } else if (balanceRaw === 0) {
+      estadoCobro = 'cobrado';
+    } else {
+      estadoCobro = 'pendiente';
+    }
+
+    const formatARS = (n: number) =>
+      n === 0 ? '$0' : `$${n.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`;
+
+    // Tipo de turno
+    let tipoTurno: TipoTurno;
+    if (item.blocker === true) {
+      tipoTurno = 'bloqueo';
+    } else if (item.fixed === true) {
+      tipoTurno = 'fijo';
+    } else {
+      tipoTurno = 'eventual';
+    }
+
+    // Hora de carga: "2026-06-25 23:11" → "23:11"
+    const creadoEn = item.created_at
+      ? normalizeTime(String(item.created_at).split(' ')[1] ?? '') || undefined
+      : undefined;
 
     return {
-      id:            String(item.id ?? '').trim() || undefined,
-      cancha:        courtName,
+      id:              String(item.id ?? '').trim() || undefined,
+      cancha:          courtName,
       horaInicio,
       horaFin,
-      estado:        parseEstado(String(item.state ?? item.status ?? '')),
-      nombreCliente: cliente || undefined,
+      duracion:        duration,
+      estado:          parseEstado(String(item.state ?? item.status ?? '')),
+      nombreCliente:   cliente || undefined,
+      telefonoCliente: telefono,
+      estadoCobro,
+      monto:           priceRaw   > 0 ? formatARS(priceRaw)   : undefined,
+      saldo:           priceRaw   > 0 ? formatARS(balanceRaw) : undefined,
+      tipoTurno,
+      origen:          item.online === true ? 'online' : 'manual',
+      nota:            item.note ? String(item.note).trim() || undefined : undefined,
+      creadoEn,
       fecha,
     };
   }

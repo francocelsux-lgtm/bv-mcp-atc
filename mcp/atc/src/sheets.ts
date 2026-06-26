@@ -11,7 +11,11 @@ import { Reserva, SyncResult } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const SHEET_HEADERS = ['Fecha', 'Cancha', 'Hora Inicio', 'Hora Fin', 'Estado', 'Cliente', 'Sincronizado'];
+const SHEET_HEADERS = [
+  'Fecha', 'Cancha', 'Hora Inicio', 'Hora Fin', 'Duración',
+  'Cliente', 'Teléfono', 'Cobro', 'Monto', 'Saldo',
+  'Tipo', 'Origen', 'Notas', 'Cargado', 'Sincronizado',
+];
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 // TOKEN_PATH resuelto relativo al proyecto, no al CWD
 const TOKEN_PATH = path.resolve(process.env.GOOGLE_TOKEN_PATH ?? path.join(__dirname, '../google-token.json'));
@@ -172,11 +176,12 @@ async function replaceRowsForDate(
   sheets: Sheets, spreadsheetId: string, sheetName: string,
   fecha: string, newRows: string[][],
 ): Promise<void> {
-  const readRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!A:G` });
+  const readRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!A:O` });
   const allRows = (readRes.data.values ?? []) as string[][];
-  const filtered = allRows.filter((row, idx) => idx === 0 || row[0] !== fecha);
-  const combined = [...filtered, ...newRows];
-  await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${sheetName}!A:G` });
+  // Always use current headers; discard old header and rows matching today's date
+  const dataRows = allRows.filter((row, idx) => idx !== 0 && row[0] !== fecha);
+  const combined = [SHEET_HEADERS, ...dataRows, ...newRows];
+  await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${sheetName}!A:O` });
   if (combined.length > 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId, range: `${sheetName}!A1`,
@@ -201,7 +206,27 @@ export async function syncReservasToSheets(reservas: Reserva[]): Promise<SyncRes
   }
 
   const fecha = reservas[0].fecha;
-  const newRows = reservas.map(r => [r.fecha, r.cancha, r.horaInicio, r.horaFin, r.estado, r.nombreCliente ?? '', syncTs]);
+
+  const COBRO_LABEL: Record<string, string> = { cobrado: 'COBRADO', pendiente: 'PENDIENTE', sin_cargo: 'SIN CARGO' };
+  const TIPO_LABEL:  Record<string, string> = { fijo: 'FIJO', eventual: 'EVENTUAL', bloqueo: 'BLOQUEO' };
+
+  const newRows = reservas.map(r => [
+    r.fecha,
+    r.cancha,
+    r.horaInicio,
+    r.horaFin,
+    r.duracion != null ? String(r.duracion) : '',
+    r.nombreCliente   ?? '',
+    r.telefonoCliente ?? '',
+    r.estadoCobro != null ? (COBRO_LABEL[r.estadoCobro] ?? r.estadoCobro) : '',
+    r.monto  ?? '',
+    r.saldo  ?? '',
+    r.tipoTurno != null ? (TIPO_LABEL[r.tipoTurno] ?? r.tipoTurno) : '',
+    r.origen === 'online' ? 'Online' : 'Manual',
+    r.nota   ?? '',
+    r.creadoEn ?? '',
+    syncTs,
+  ]);
   await replaceRowsForDate(sheets, spreadsheetId, sheetName, fecha, newRows);
   process.stderr.write(`[Sheets] ${newRows.length} filas escritas para ${fecha}\n`);
 

@@ -1,13 +1,25 @@
 export type EstadoReserva = 'confirmada' | 'pendiente' | 'cancelada' | 'desconocido';
+export type EstadoCobro  = 'cobrado' | 'pendiente' | 'sin_cargo';
+export type TipoTurno    = 'fijo' | 'eventual' | 'bloqueo';
+export type OrigenTurno  = 'online' | 'manual';
 
 export interface Reserva {
   id?: string;
   cancha: string;
-  horaInicio: string;  // "HH:MM"
-  horaFin: string;     // "HH:MM"
+  horaInicio: string;       // "HH:MM"
+  horaFin: string;          // "HH:MM"
+  duracion?: number;        // minutos
   estado: EstadoReserva;
   nombreCliente?: string;
-  fecha: string;       // "YYYY-MM-DD"
+  telefonoCliente?: string;
+  estadoCobro?: EstadoCobro;
+  monto?: string;           // "$18.000"
+  saldo?: string;           // "$0"
+  tipoTurno?: TipoTurno;
+  origen?: OrigenTurno;
+  nota?: string;
+  creadoEn?: string;        // "HH:MM"
+  fecha: string;            // "YYYY-MM-DD"
 }
 
 export interface OcupacionFranja {
