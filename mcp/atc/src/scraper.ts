@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer';
 import type { Browser, Page, HTTPResponse } from 'puppeteer';
+// HTTPResponse used only in debug mode response listener
 import path from 'path';
 import fs from 'fs/promises';
 import { Reserva, EstadoReserva } from './types.js';
@@ -14,18 +15,6 @@ const SEL = {
   submit:   process.env.ATC_SEL_SUBMIT   ?? 'button[type="submit"]',
 };
 
-// Patrones de URL de la API interna de ATC (atcsports.io) que contienen reservas
-const BOOKING_URL_PATTERNS = [
-  /atcsports\.io\/api\//i,
-  /\/api\/.*\/(booking|reserva|slot|schedule|turn|grid|availability)/i,
-  /\/bookings?[/?]/i,
-  /\/reservas?[/?]/i,
-  /\/slots?[/?]/i,
-  /\/schedule[/?]/i,
-  /\/turns?[/?]/i,
-  /\/grid[/?]/i,
-  /\/availability[/?]/i,
-];
 
 export function todayArgentina(): string {
   return new Date().toLocaleDateString('en-CA', {
@@ -69,7 +58,6 @@ function parseEstado(raw: string): EstadoReserva {
 export class ATCScraper {
   private browser: Browser | null = null;
   private page: Page | null = null;
-  private capturedReservas: Reserva[] = [];
   private readonly debug = process.env.ATC_DEBUG === 'true';
   private readonly debugDir = path.resolve(process.env.ATC_DEBUG_DIR ?? './debug');
 
@@ -95,24 +83,16 @@ export class ATCScraper {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     );
 
-    // Capturamos respuestas JSON de la API interna de ATC
-    this.page.on('response', async (res: HTTPResponse) => {
-      try {
+    // Logueamos todas las respuestas JSON en debug (útil para descubrir endpoints)
+    if (this.debug) {
+      this.page.on('response', (res: HTTPResponse) => {
         if (res.status() !== 200) return;
         const ct = res.headers()['content-type'] ?? '';
-        if (!ct.includes('application/json')) return;
-        const url = res.url();
-        // En modo debug logueamos TODAS las URLs JSON para descubrir los endpoints reales
-        if (this.debug) this.log(`API JSON [${res.status()}]: ${url}`);
-        if (!this.isBookingUrl(url)) return;
-        const json: unknown = await res.json();
-        const extracted = this.extractFromApiPayload(json);
-        if (extracted.length > 0) {
-          this.capturedReservas.push(...extracted);
-          this.log(`Capturadas ${extracted.length} reservas vía API: ${url}`);
+        if (ct.includes('application/json')) {
+          this.log(`API JSON [${res.status()}]: ${res.url()}`);
         }
-      } catch { /* ignorar errores de parse */ }
-    });
+      });
+    }
   }
 
   async close(): Promise<void> {
@@ -174,184 +154,144 @@ export class ATCScraper {
 
   async getReservasHoy(): Promise<Reserva[]> {
     const p = this.requirePage();
-    this.capturedReservas = [];
+    const date = todayArgentina();
 
+    // Navegamos al grid para refrescar la sesión
     const scheduleUrl = getScheduleUrl();
     this.log(`Navegando a agenda: ${scheduleUrl}`);
-
     const currentBase = p.url().split('#')[0];
     const targetBase  = scheduleUrl.split('#')[0];
     const hashPart    = scheduleUrl.includes('#') ? scheduleUrl.slice(scheduleUrl.indexOf('#') + 1) : '';
-
     if (currentBase === targetBase && hashPart) {
-      // Ya estamos en la misma SPA — usamos cambio de hash para no perder la sesión
       this.log(`SPA detectada. Cambiando hash a: #${hashPart}`);
       await p.evaluate((h) => { window.location.hash = h; }, hashPart);
     } else {
       await p.goto(scheduleUrl, { waitUntil: 'networkidle2', timeout: 30_000 });
     }
-
-    // Damos tiempo a que el router SPA cargue y dispare sus llamadas a la API
-    await new Promise(res => setTimeout(res, 4_000));
+    await new Promise(res => setTimeout(res, 2_000));
     await this.debugSnapshot('04-schedule-page');
 
-    // Si la API interception ya capturó datos, los usamos
-    if (this.capturedReservas.length > 0) {
-      this.log(`Usando ${this.capturedReservas.length} reservas capturadas de API.`);
-      return this.dedupe(this.capturedReservas);
+    // ── Llamada directa a la API de ATC ───────────────────────────────────────
+    // Usamos las cookies de sesión del browser (mucho más confiable que event interception)
+    const clubId    = await this.getClubId(p);
+    const courtsMap = await this.fetchCourtsMap(p, clubId);
+
+    const bookingsUrl = `https://atcsports.io/c/sportclubs/${clubId}/bookings?day=${date}`;
+    this.log(`Llamando API: ${bookingsUrl}`);
+
+    let rawData: unknown;
+    try {
+      rawData = await p.evaluate(async (url) => {
+        const res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }, bookingsUrl);
+    } catch (err) {
+      throw new Error(`No se pudo obtener reservas de ATC: ${err}`);
     }
 
-    // Fallback: scraping del DOM
-    this.log('API interception sin resultados. Intentando scraping de DOM…');
-    const domReservas = await this.scrapeDOM(p);
-    if (domReservas.length > 0) return domReservas;
-
-    // Si no encontramos nada, guardamos snapshot de debug y advertimos
-    await this.debugSnapshot('05-no-data');
     if (this.debug) {
-      const html = await p.content();
-      await fs.writeFile(path.join(this.debugDir, '05-page.html'), html, 'utf8');
+      await fs.mkdir(this.debugDir, { recursive: true });
+      await fs.writeFile(
+        path.join(this.debugDir, '06-bookings-raw.json'),
+        JSON.stringify(rawData, null, 2),
+        'utf8',
+      );
+      this.log('JSON crudo guardado en debug/06-bookings-raw.json');
     }
 
-    throw new Error(
-      'No se encontraron reservas en la página.\n' +
-      `URL cargada: ${p.url()}\n` +
-      'Asegurate de que ATC_CLUB_SCHEDULE_URL apunte a la vista de agenda del día.\n' +
-      'Activá ATC_DEBUG=true para guardar capturas y HTML en ' + this.debugDir,
-    );
+    return this.parseATCBookings(rawData, courtsMap, date);
   }
 
-  // ── DOM scraping fallback ──────────────────────────────────────────────────
+  // ── Helpers de API de ATC ──────────────────────────────────────────────────
 
-  private async scrapeDOM(p: Page): Promise<Reserva[]> {
-    const fecha = todayArgentina();
-
-    // Intentamos detectar elementos de reserva con varios patrones comunes
-    const reservas = await p.evaluate((fecha: string) => {
-      const result: Array<{
-        cancha: string; horaInicio: string; horaFin: string;
-        estado: string; nombreCliente: string; fecha: string;
-      }> = [];
-
-      // Estrategia 1: celdas con data-attributes (patrón común en calendarios)
-      const byData = document.querySelectorAll<HTMLElement>(
-        '[data-booking-id], [data-reservation], [data-court][data-start]',
-      );
-      byData.forEach(el => {
-        result.push({
-          cancha:        el.dataset.court ?? el.dataset.cancha ?? el.dataset.courtName ?? 'Sin datos',
-          horaInicio:    el.dataset.start ?? el.dataset.startTime ?? el.dataset.horaInicio ?? '',
-          horaFin:       el.dataset.end   ?? el.dataset.endTime   ?? el.dataset.horaFin   ?? '',
-          estado:        el.dataset.status ?? el.dataset.estado ?? 'desconocido',
-          nombreCliente: el.dataset.player ?? el.dataset.client ?? el.dataset.playerName ?? '',
-          fecha,
-        });
-      });
-
-      if (result.length > 0) return result;
-
-      // Estrategia 2: cards o filas con clases comunes de booking
-      const byClass = document.querySelectorAll<HTMLElement>(
-        '.booking-item, .reservation-card, .slot-booked, .turn-card, ' +
-        '[class*="booking"], [class*="reservation"], [class*="reserva"], [class*="turno"]',
-      );
-      byClass.forEach(el => {
-        const text = el.innerText ?? '';
-        const timeMatch = text.match(/(\d{2}:\d{2})\s*[-–]\s*(\d{2}:\d{2})/);
-        result.push({
-          cancha:        el.querySelector('[class*="court"], [class*="cancha"]')?.textContent?.trim() ?? 'Sin datos',
-          horaInicio:    timeMatch?.[1] ?? '',
-          horaFin:       timeMatch?.[2] ?? '',
-          estado:        'desconocido',
-          nombreCliente: el.querySelector('[class*="player"], [class*="user"], [class*="client"], [class*="nombre"]')?.textContent?.trim() ?? '',
-          fecha,
-        });
-      });
-
-      return result;
-    }, fecha);
-
-    return reservas.map(r => ({
-      ...r,
-      horaInicio:    normalizeTime(r.horaInicio),
-      horaFin:       normalizeTime(r.horaFin),
-      estado:        parseEstado(r.estado) as EstadoReserva,
-      nombreCliente: r.nombreCliente || undefined,
-    })).filter(r => r.horaInicio !== '');
+  private async getClubId(p: Page): Promise<string> {
+    if (process.env.ATC_CLUB_ID) return process.env.ATC_CLUB_ID;
+    // Intentar extraer el ID numérico de la URL actual de la SPA
+    const fromUrl = p.url().match(/sportclubs\/(\d+)/)?.[1];
+    if (fromUrl) return fromUrl;
+    // Hardcoded para bella-vista-paddle basado en los logs de debug
+    this.log('ATC_CLUB_ID no definido. Usando 1629 (bella-vista-paddle). Agregá ATC_CLUB_ID=1629 al .env para evitar este mensaje.');
+    return '1629';
   }
 
-  // ── API payload parser ─────────────────────────────────────────────────────
+  private async fetchCourtsMap(p: Page, clubId: string): Promise<Map<number, string>> {
+    const map = new Map<number, string>();
+    try {
+      const data = await p.evaluate(async (url) => {
+        const res = await fetch(url, { credentials: 'include' });
+        return res.json();
+      }, `https://atcsports.io/c/sportclubs/${clubId}/courts?full=true`);
 
-  private extractFromApiPayload(payload: unknown): Reserva[] {
-    const fecha = todayArgentina();
-    const items = this.findArraysInPayload(payload);
-    const reservas: Reserva[] = [];
-
-    for (const item of items) {
-      const r = this.parseBookingObject(item as Record<string, unknown>, fecha);
-      if (r) reservas.push(r);
+      const items = Array.isArray(data) ? data :
+        ((data as Record<string, unknown>)?.courts ?? []) as unknown[];
+      for (const c of items as Record<string, unknown>[]) {
+        const id   = Number(c.id);
+        const name = String(c.name ?? c.court_name ?? `Cancha ${id}`);
+        if (id) map.set(id, name);
+      }
+      this.log(`Canchas cargadas: ${[...map.values()].join(', ')}`);
+    } catch {
+      this.log('No se pudo cargar la lista de canchas (no crítico).');
     }
+    return map;
+  }
+
+  // ── Parser dedicado para el formato de ATC ─────────────────────────────────
+
+  private parseATCBookings(data: unknown, courts: Map<number, string>, fecha: string): Reserva[] {
+    const items = Array.isArray(data) ? data :
+      ((data as Record<string, unknown>)?.bookings ??
+       (data as Record<string, unknown>)?.data ??
+       []) as unknown[];
+
+    const reservas = (items as Record<string, unknown>[])
+      .map(item => this.parseATCItem(item, courts, fecha))
+      .filter((r): r is Reserva => r !== null);
+
+    this.log(`${reservas.length} reservas parseadas.`);
     return reservas;
   }
 
-  private findArraysInPayload(payload: unknown): unknown[] {
-    if (Array.isArray(payload)) return payload;
-    if (payload && typeof payload === 'object') {
-      const p = payload as Record<string, unknown>;
-      // Claves comunes donde las APIs meten sus arrays
-      for (const key of ['data', 'bookings', 'reservas', 'items', 'results', 'turns', 'slots', 'schedule', 'content']) {
-        if (Array.isArray(p[key])) return p[key] as unknown[];
-      }
-      // Búsqueda recursiva un nivel más
-      for (const val of Object.values(p)) {
-        const found = this.findArraysInPayload(val);
-        if (found.length > 0) return found;
-      }
-    }
-    return [];
-  }
+  private parseATCItem(item: Record<string, unknown>, courts: Map<number, string>, fecha: string): Reserva | null {
+    // Court: lookup por ID en el mapa, o desde el objeto court anidado
+    const courtObj = item.court as Record<string, unknown> | undefined;
+    const courtId  = Number(courtObj?.id ?? item.court_id ?? item.courtId ?? 0);
+    const cancha   = courts.get(courtId) ??
+      String(courtObj?.name ?? item.cancha ?? item.court_name ?? (courtId ? `Cancha ${courtId}` : 'Sin especificar')).trim();
 
-  private parseBookingObject(item: Record<string, unknown>, fecha: string): Reserva | null {
-    const cancha = String(
-      item.court_name ?? item.courtName ?? item.cancha ?? item.court ??
-      item.facility    ?? item.place     ?? item.court_id ?? '',
-    ).trim();
-
+    // Horario: desde objeto slot anidado o campos directos
+    const slot       = item.slot as Record<string, unknown> | undefined;
     const horaInicio = normalizeTime(
-      item.start_time ?? item.startTime ?? item.start ?? item.hora_inicio ??
-      item.from       ?? item.time_from ?? item.begin ?? '',
+      slot?.from  ?? slot?.start      ?? slot?.start_time  ??
+      item.start_time ?? item.startTime ?? item.start ?? item.from ?? item.hora_inicio ?? '',
     );
     const horaFin = normalizeTime(
-      item.end_time   ?? item.endTime   ?? item.end   ?? item.hora_fin  ??
-      item.to         ?? item.time_to   ?? item.finish ?? '',
+      slot?.to    ?? slot?.end        ?? slot?.end_time    ??
+      item.end_time   ?? item.endTime   ?? item.end   ?? item.to   ?? item.hora_fin   ?? '',
     );
 
-    if (!horaInicio) return null;  // sin hora de inicio no tiene sentido
+    if (!horaInicio) return null;
 
-    const clientRaw = String(
-      item.player_name ?? item.playerName ?? item.user_name ?? item.userName ??
-      item.client_name ?? item.clientName ?? item.nombre    ?? item.name     ??
-      item.player      ?? item.client     ?? item.user      ?? '',
+    // Cliente: desde objeto user/player anidado o campos directos
+    const userObj = (item.user ?? item.player ?? item.client) as Record<string, unknown> | undefined;
+    const cliente = String(
+      userObj?.name ?? userObj?.full_name ?? userObj?.display_name ??
+      item.user_name ?? item.player_name ?? item.client_name ?? item.nombre ?? '',
     ).trim();
 
-    const estadoRaw = String(item.status ?? item.estado ?? item.state ?? item.booking_status ?? '');
-
     return {
-      id:            String(item.id ?? item.booking_id ?? item.bookingId ?? '').trim() || undefined,
-      cancha:        cancha || 'Sin especificar',
+      id:            String(item.id ?? '').trim() || undefined,
+      cancha,
       horaInicio,
       horaFin,
-      estado:        parseEstado(estadoRaw),
-      nombreCliente: clientRaw || undefined,
+      estado:        parseEstado(String(item.status ?? item.estado ?? item.state ?? '')),
+      nombreCliente: cliente || undefined,
       fecha,
     };
   }
 
   // ── Utilidades ─────────────────────────────────────────────────────────────
-
-  private isBookingUrl(url: string): boolean {
-    return BOOKING_URL_PATTERNS.some(p => p.test(url));
-  }
 
   private dedupe(reservas: Reserva[]): Reserva[] {
     const seen = new Set<string>();
