@@ -142,8 +142,13 @@ export class ATCScraper {
     }, SEL.email);
     await p.type(SEL.email, email, { delay: 40 });
 
-    // Esperamos el campo password (puede tardar más en CI o si el form es de dos pasos)
-    await p.waitForSelector(SEL.password, { timeout: 15_000 });
+    // Tab simula que el usuario pasa al siguiente campo; necesario en forms de dos pasos
+    // donde el campo de contraseña aparece solo después de salir del campo email.
+    await p.keyboard.press('Tab');
+    await new Promise(res => setTimeout(res, 1_500));
+
+    // visible:true espera a que el campo sea visible, no solo que exista en el DOM
+    await p.waitForSelector(SEL.password, { visible: true, timeout: 20_000 });
     await p.click(SEL.password);
     await p.evaluate((sel) => {
       const el = document.querySelector(sel) as HTMLInputElement | null;
