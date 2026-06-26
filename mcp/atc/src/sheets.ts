@@ -12,17 +12,29 @@ import { Reserva, SyncResult } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Retry on transient network errors (Premature close, ECONNRESET, ETIMEDOUT)
-gaxiosInstance.defaults = {
-  ...gaxiosInstance.defaults,
-  retryConfig: {
-    retry: 4,
-    noResponseRetries: 4,
-    retryDelay: 1000,
-    httpMethodsToRetry: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    statusCodesToRetry: [[100, 199], [408, 408], [429, 429], [500, 599]],
-  },
+// "Premature close" is a body-level TCP error — not caught by statusCodesToRetry or
+// noResponseRetries. A custom shouldRetry is required to handle it explicitly.
+const isTransientError = (err: Error) =>
+  err.message.includes('Premature close') ||
+  err.message.includes('ECONNRESET') ||
+  err.message.includes('ETIMEDOUT') ||
+  err.message.includes('ENOTFOUND') ||
+  err.message.includes('socket hang up');
+
+const RETRY_CONFIG = {
+  retry: 4,
+  noResponseRetries: 4,
+  retryDelay: 1000,
+  httpMethodsToRetry: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  statusCodesToRetry: [[100, 199], [408, 408], [429, 429], [500, 599]] as [number, number][],
+  shouldRetry: (err: Error) => isTransientError(err),
 };
+
+// Cover google-auth-library token refresh calls (uses global gaxios instance)
+gaxiosInstance.defaults = { ...gaxiosInstance.defaults, retryConfig: RETRY_CONFIG };
+
+// Cover googleapis Sheets API calls (googleapis creates its own gaxios instances)
+google.options({ retryConfig: RETRY_CONFIG });
 
 const SHEET_HEADERS = [
   'Fecha', 'Cancha', 'Hora Inicio', 'Hora Fin', 'Duración',
