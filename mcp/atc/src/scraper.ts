@@ -98,15 +98,18 @@ export class ATCScraper {
     // Capturamos respuestas JSON de la API interna de ATC
     this.page.on('response', async (res: HTTPResponse) => {
       try {
-        if (!this.isBookingUrl(res.url())) return;
         if (res.status() !== 200) return;
         const ct = res.headers()['content-type'] ?? '';
         if (!ct.includes('application/json')) return;
+        const url = res.url();
+        // En modo debug logueamos TODAS las URLs JSON para descubrir los endpoints reales
+        if (this.debug) this.log(`API JSON [${res.status()}]: ${url}`);
+        if (!this.isBookingUrl(url)) return;
         const json: unknown = await res.json();
         const extracted = this.extractFromApiPayload(json);
         if (extracted.length > 0) {
           this.capturedReservas.push(...extracted);
-          this.log(`Capturadas ${extracted.length} reservas vía API: ${res.url()}`);
+          this.log(`Capturadas ${extracted.length} reservas vía API: ${url}`);
         }
       } catch { /* ignorar errores de parse */ }
     });
@@ -175,10 +178,21 @@ export class ATCScraper {
 
     const scheduleUrl = getScheduleUrl();
     this.log(`Navegando a agenda: ${scheduleUrl}`);
-    await p.goto(scheduleUrl, { waitUntil: 'networkidle2', timeout: 30_000 });
 
-    // Espera adicional para que la SPA termine de renderizar
-    await new Promise(res => setTimeout(res, 2_000));
+    const currentBase = p.url().split('#')[0];
+    const targetBase  = scheduleUrl.split('#')[0];
+    const hashPart    = scheduleUrl.includes('#') ? scheduleUrl.slice(scheduleUrl.indexOf('#') + 1) : '';
+
+    if (currentBase === targetBase && hashPart) {
+      // Ya estamos en la misma SPA — usamos cambio de hash para no perder la sesión
+      this.log(`SPA detectada. Cambiando hash a: #${hashPart}`);
+      await p.evaluate((h) => { window.location.hash = h; }, hashPart);
+    } else {
+      await p.goto(scheduleUrl, { waitUntil: 'networkidle2', timeout: 30_000 });
+    }
+
+    // Damos tiempo a que el router SPA cargue y dispare sus llamadas a la API
+    await new Promise(res => setTimeout(res, 4_000));
     await this.debugSnapshot('04-schedule-page');
 
     // Si la API interception ya capturó datos, los usamos
