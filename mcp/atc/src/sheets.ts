@@ -54,24 +54,34 @@ type Sheets = sheets_v4.Sheets;
 //   3. Ninguno                      → Application Default Credentials (gcloud ADC)
 // ─────────────────────────────────────────────────────────────────────────────
 async function buildSheetsClient(): Promise<Sheets> {
-  // Modo 1: Service Account — recomendado para CI/CD (no requiere token refresh interactivo)
+  // Modo 1: ADC — usado en CI/CD con Workload Identity Federation (google-github-actions/auth
+  //   setea GOOGLE_APPLICATION_CREDENTIALS con un token de corta duración, sin claves JSON).
+  //   También funciona en GCP (Cloud Run, GCE) y con `gcloud auth application-default login`.
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    process.stderr.write('[Sheets] Autenticando con ADC (Workload Identity / gcloud).\n');
+    const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
+    return google.sheets({ version: 'v4', auth });
+  }
+
+  // Modo 2: Service Account JSON embebido (fallback si no hay ADC)
   const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (saJson) {
     const credentials = JSON.parse(saJson);
     const auth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
-    process.stderr.write('[Sheets] Autenticando con Service Account.\n');
+    process.stderr.write('[Sheets] Autenticando con Service Account JSON.\n');
     return google.sheets({ version: 'v4', auth });
   }
 
-  // Modo 2: OAuth2 Desktop App (solo para uso local; no confiable en CI/CD)
+  // Modo 3: OAuth2 Desktop App (solo para uso local interactivo)
   const oauthJson = process.env.GOOGLE_OAUTH_CLIENT_JSON;
   if (oauthJson) {
-    process.stderr.write('[Sheets] Autenticando con OAuth2 (Desktop App).\n');
+    process.stderr.write('[Sheets] Autenticando con OAuth2 (Desktop App — solo local).\n');
     const auth = await getOAuth2Client(oauthJson);
     return google.sheets({ version: 'v4', auth });
   }
 
-  // Modo 3: ADC (funciona para GCP APIs, puede fallar con Sheets por scope)
+  // Modo 4: ADC sin variable de entorno explícita (gcloud en PATH)
+  process.stderr.write('[Sheets] Autenticando con ADC (detección automática).\n');
   const auth = new google.auth.GoogleAuth({ scopes: SCOPES });
   return google.sheets({ version: 'v4', auth });
 }

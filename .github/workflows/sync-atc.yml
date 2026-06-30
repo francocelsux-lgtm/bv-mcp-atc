@@ -10,6 +10,10 @@ on:
   # Ejecucion manual desde GitHub -> Actions -> "Run workflow"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write   # Requerido para Workload Identity Federation (OIDC)
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -24,21 +28,26 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Autenticar con Google (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
       - name: Install dependencies
         run: npm install
         working-directory: mcp/atc
 
       - name: Sync reservas -> Sheets
         env:
-          ATC_EMAIL:                   ${{ secrets.ATC_EMAIL }}
-          ATC_PASSWORD:                ${{ secrets.ATC_PASSWORD }}
-          ATC_LOGIN_URL:               "https://atcsports.io/club/bella-vista-paddle#!/login/signin"
-          ATC_CLUB_SCHEDULE_URL:       "https://atcsports.io/club/bella-vista-paddle#!/app/grid"
-          ATC_CLUB_ID:                 "1629"
-          ATC_DEBUG:                   "true"
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SPREADSHEET_ID:       ${{ secrets.GOOGLE_SPREADSHEET_ID }}
-          GOOGLE_SHEET_NAME:           "ATC Reservas"
+          ATC_EMAIL:             ${{ secrets.ATC_EMAIL }}
+          ATC_PASSWORD:          ${{ secrets.ATC_PASSWORD }}
+          ATC_LOGIN_URL:         "https://atcsports.io/club/bella-vista-paddle#!/login/signin"
+          ATC_CLUB_SCHEDULE_URL: "https://atcsports.io/club/bella-vista-paddle#!/app/grid"
+          ATC_CLUB_ID:           "1629"
+          ATC_DEBUG:             "true"
+          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          GOOGLE_SHEET_NAME:     "ATC Reservas"
         run: npm run sync
         working-directory: mcp/atc
 
