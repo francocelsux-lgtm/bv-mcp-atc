@@ -178,9 +178,9 @@ export class ATCScraper {
 
   // ── Scraping principal ─────────────────────────────────────────────────────
 
-  async getReservasHoy(): Promise<Reserva[]> {
+  async getReservasDia(fecha: string): Promise<Reserva[]> {
     const p = this.requirePage();
-    const date = todayArgentina();
+    const date = fecha;
 
     // Navegamos al grid para refrescar la sesión
     const scheduleUrl = getScheduleUrl();
@@ -227,6 +227,10 @@ export class ATCScraper {
     }
 
     return this.parseATCBookings(rawData, courtsMap, date);
+  }
+
+  async getReservasHoy(): Promise<Reserva[]> {
+    return this.getReservasDia(todayArgentina());
   }
 
   // ── Investigación de URLs ──────────────────────────────────────────────────
@@ -494,16 +498,30 @@ export async function investigateUrl(targetUrl: string): Promise<void> {
 // Función de alto nivel para uso externo
 // ─────────────────────────────────────────────────────────────────────────────
 export async function fetchReservasHoy(): Promise<Reserva[]> {
-  // Modo mock para desarrollo sin ATC
-  if (process.env.ATC_MOCK === 'true') {
-    return buildMockReservas();
-  }
-
+  if (process.env.ATC_MOCK === 'true') return buildMockReservas();
   const scraper = new ATCScraper();
   try {
     await scraper.init();
     await scraper.login();
     return await scraper.getReservasHoy();
+  } finally {
+    await scraper.close();
+  }
+}
+
+// Reutiliza una sesión ya abierta para iterar fechas sin re-login.
+export async function fetchReservasRango(
+  fechas: string[],
+  onDia: (fecha: string, reservas: Reserva[]) => Promise<void>,
+): Promise<void> {
+  const scraper = new ATCScraper();
+  try {
+    await scraper.init();
+    await scraper.login();
+    for (const fecha of fechas) {
+      const reservas = await scraper.getReservasDia(fecha);
+      await onDia(fecha, reservas);
+    }
   } finally {
     await scraper.close();
   }
