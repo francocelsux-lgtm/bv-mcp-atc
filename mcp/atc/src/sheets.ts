@@ -59,13 +59,15 @@ export async function syncReservasToSheets(reservas: Reserva[]): Promise<SyncRes
     syncTs,
   ]);
 
-  const body = JSON.stringify({ token, sheetName, fecha, rows });
+  // Token como query param: Apps Script lo lee via e.parameter.token.
+  // El resto va en el body JSON (e.postData.contents).
+  const urlWithToken = `${url}?token=${encodeURIComponent(token)}`;
+  const body = JSON.stringify({ sheetName, fecha, rows });
 
-  const res = await fetch(url, {
+  const res = await fetch(urlWithToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
-    // Apps Script redirige el POST — seguir redirecciones manualmente
     redirect: 'follow',
   });
 
