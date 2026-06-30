@@ -54,17 +54,19 @@ type Sheets = sheets_v4.Sheets;
 //   3. Ninguno                      → Application Default Credentials (gcloud ADC)
 // ─────────────────────────────────────────────────────────────────────────────
 async function buildSheetsClient(): Promise<Sheets> {
-  // Modo 1: Service Account
+  // Modo 1: Service Account — recomendado para CI/CD (no requiere token refresh interactivo)
   const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (saJson) {
     const credentials = JSON.parse(saJson);
     const auth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
+    process.stderr.write('[Sheets] Autenticando con Service Account.\n');
     return google.sheets({ version: 'v4', auth });
   }
 
-  // Modo 2: OAuth2 Desktop App
+  // Modo 2: OAuth2 Desktop App (solo para uso local; no confiable en CI/CD)
   const oauthJson = process.env.GOOGLE_OAUTH_CLIENT_JSON;
   if (oauthJson) {
+    process.stderr.write('[Sheets] Autenticando con OAuth2 (Desktop App).\n');
     const auth = await getOAuth2Client(oauthJson);
     return google.sheets({ version: 'v4', auth });
   }
