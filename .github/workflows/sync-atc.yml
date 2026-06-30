@@ -10,10 +10,6 @@ on:
   # Ejecucion manual desde GitHub -> Actions -> "Run workflow"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write   # Requerido para Workload Identity Federation (OIDC)
-
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -28,12 +24,6 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Autenticar con Google (Workload Identity Federation)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-
       - name: Install dependencies
         run: npm install
         working-directory: mcp/atc
@@ -46,6 +36,8 @@ jobs:
           ATC_CLUB_SCHEDULE_URL: "https://atcsports.io/club/bella-vista-paddle#!/app/grid"
           ATC_CLUB_ID:           "1629"
           ATC_DEBUG:             "true"
+          APPS_SCRIPT_URL:       ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_TOKEN:     ${{ secrets.APPS_SCRIPT_TOKEN }}
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
           GOOGLE_SHEET_NAME:     "ATC Reservas"
         run: npm run sync
