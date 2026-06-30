@@ -28,22 +28,18 @@ jobs:
         run: npm install
         working-directory: mcp/atc
 
-      - name: Write Google OAuth token
-        run: echo '${{ secrets.GOOGLE_TOKEN_JSON }}' > google-token.json
-        working-directory: mcp/atc
-
       - name: Sync reservas -> Sheets
         env:
-          ATC_EMAIL:                ${{ secrets.ATC_EMAIL }}
-          ATC_PASSWORD:             ${{ secrets.ATC_PASSWORD }}
-          ATC_LOGIN_URL:            "https://atcsports.io/club/bella-vista-paddle#!/login/signin"
-          ATC_CLUB_SCHEDULE_URL:    "https://atcsports.io/club/bella-vista-paddle#!/app/grid"
-          ATC_CLUB_ID:              "1629"
-          ATC_DEBUG:                "true"
-          GOOGLE_OAUTH_CLIENT_JSON: ${{ secrets.GOOGLE_OAUTH_CLIENT_JSON }}
-          GOOGLE_SPREADSHEET_ID:    ${{ secrets.GOOGLE_SPREADSHEET_ID }}
-          GOOGLE_SHEET_NAME:        "ATC Reservas"
-          GOOGLE_TOKEN_PATH:        ./google-token.json
+          ATC_EMAIL:             ${{ secrets.ATC_EMAIL }}
+          ATC_PASSWORD:          ${{ secrets.ATC_PASSWORD }}
+          ATC_LOGIN_URL:         "https://atcsports.io/club/bella-vista-paddle#!/login/signin"
+          ATC_CLUB_SCHEDULE_URL: "https://atcsports.io/club/bella-vista-paddle#!/app/grid"
+          ATC_CLUB_ID:           "1629"
+          ATC_DEBUG:             "true"
+          APPS_SCRIPT_URL:       ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_TOKEN:     ${{ secrets.APPS_SCRIPT_TOKEN }}
+          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          GOOGLE_SHEET_NAME:     "ATC Reservas"
         run: npm run sync
         working-directory: mcp/atc
 

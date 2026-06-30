@@ -45,8 +45,10 @@ try {
     process.stderr.write(`[${ts()}] ✗ Token de Google revocado o expirado.\n`);
     process.stderr.write(`[${ts()}]   Eliminá google-token.json y corré 'npm run sync' de nuevo para re-autenticar.\n`);
   } else if (msg.includes('Premature close') || msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT')) {
-    process.stderr.write(`[${ts()}] ✗ Error de red con Google (después de reintentos).\n`);
-    process.stderr.write(`[${ts()}]   Problema de conexión transitorio con los servidores de Google. Intentá de nuevo en unos minutos.\n`);
+    process.stderr.write(`[${ts()}] ✗ Error de red con Google OAuth (después de reintentos).\n`);
+    process.stderr.write(`[${ts()}]   OAuth2 Desktop App no es confiable en CI/CD — usar Service Account en su lugar.\n`);
+    process.stderr.write(`[${ts()}]   → Configurá el secret GOOGLE_SERVICE_ACCOUNT_JSON con las credenciales de una cuenta de servicio.\n`);
+    process.stderr.write(`[${ts()}]   → Compartí la planilla con el email de la cuenta de servicio (editor).\n`);
   } else {
     process.stderr.write(`[${ts()}] ✗ Error: ${msg}\n`);
   }
