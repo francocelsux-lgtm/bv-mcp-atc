@@ -361,13 +361,23 @@ export class ATCScraper {
   }
 
   private parseATCItem(item: Record<string, unknown>, courtName: string, fecha: string): Reserva | null {
-    // bookeable contiene la hora y duración
+    // bookeable contiene la hora y duración.
+    // booking_once → bookeable.datetime_start = "2026-06-26 15:00"
+    // booking_fixed → bookeable.time = número decimal (18.5 = 18:30, 20 = 20:00)
     const bookeable = item.bookeable as Record<string, unknown> | undefined;
-    if (!bookeable?.datetime_start) return null;
+    if (!bookeable) return null;
 
-    // "2026-06-26 15:00" → "15:00"
-    const datetimeStr = String(bookeable.datetime_start);
-    const horaInicio  = normalizeTime(datetimeStr.split(' ')[1] ?? '');
+    let horaInicio: string;
+    if (bookeable.datetime_start) {
+      horaInicio = normalizeTime(String(bookeable.datetime_start).split(' ')[1] ?? '');
+    } else if (bookeable.time != null) {
+      const totalMin = Math.round(Number(bookeable.time) * 60);
+      const h = Math.floor(totalMin / 60) % 24;
+      const m = totalMin % 60;
+      horaInicio = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    } else {
+      return null;
+    }
     if (!horaInicio) return null;
 
     const duration = Number(bookeable.duration ?? 90); // minutos
